@@ -11,6 +11,7 @@
 #install.packages(gridExtra)
 #install.packages(genefilter)
 #install.packages(calibrate)
+#install.packages('ggfortify')
 
 ## Dataset information ----------------------------------------------------------------------------
 print("Setting the dataset information ...")
@@ -34,7 +35,7 @@ num_control_datasets = 2
 num_experimental_datasets = 2
 # The column the count data located is in, from original file. 
 count_column <- 7
-
+length_column <- 6
 ## Setup the output directory ---------------------------------------------------------------------
 print("Setting the output directory ...")
 # Create the output directory
@@ -57,6 +58,7 @@ for (val in dataset_list) {
   if (first_dataset == TRUE) {
     print("Adding the first dataset ...")
     countdata <- read.table(paste(file_dir, val, sep = "/"), header=TRUE, row.names=1)[count_column-1]
+    # gene_lengths <- as.matrix(read.table(paste(file_dir, val, sep = "/"), header=TRUE, row.names=1)[count_column-1])
     first_dataset <- FALSE
   } else {
     print("Adding another dataset ...")
@@ -85,6 +87,7 @@ library(ggplot2)
 library(gplots)
 library(RColorBrewer)
 library(gridExtra)
+library(ggfortify)
 
 
 ## Create the main DESeq2 dataset -----------------------------------------------------------------
@@ -259,4 +262,39 @@ volcanoplot <- function (res, lfcthresh=2, sigthresh=0.05, main="Volcano Plot", 
 png(paste(project_name, "_diffexpr-volcanoplot.png"), 1200, 1000, pointsize=50)
 volcanoplot(resdata, lfcthresh=1, sigthresh=0.05, textcx=.8, xlim=c(-2.3, 2))
 dev.off()
+
+## Calculate the FPKM and TPM for every read
+gene_counts <- merge(x = countdata, y = gene_lengths, by=0)
+rownames(gene_counts) <- gene_counts$Row.names
+gene_counts <- as.matrix(gene_counts[,-1])
+scaling_factors <- data.frame(matrix(NA, nrow = nrow(coldata), ncol = 2), row.names = rownames(coldata))
+colnames(scaling_factors) <- c("RPKM_scale", "TPM_scale")
+for (i in rownames(coldata)) {
+  # First calculate RPKM ... 
+  scaling_factors[i,"RPKM_scale"] <-sum(gene_counts[i]) / 1000000
+  gene_counts[paste(i,"_RPM")] <- gene_counts[i] / scaling_factors[i,"RPKM_scale"]
+  gene_counts[paste(i,"_RPKM")] <- gene_counts[paste(i,"_RPM")] / (gene_counts["Length"] / 1000)
+
+  # ... then calculate TPM
+  gene_counts[paste(i,"_RPK")] <- gene_counts[i] / (gene_counts["Length"] / 1000)
+  scaling_factors[i,"TPM_scale"] <-sum(gene_counts[paste(i,"_RPK")]) / 1000000
+  gene_counts[paste(i,"_TPM")] <- gene_counts[paste(i,"_RPK")] / scaling_factors[i,"TPM_scale"]
+  }
+# Write the raw counts, gene length, FPKM and TPM to a file 
+write.csv(gene_counts[c(rownames(coldata), 
+                        paste(rownames(coldata), "_RPKM"), 
+                        paste(rownames(coldata), "_TPM"))
+                        ], 
+          file=paste(project_name, "_FPKM_TPM.csv"))
+
+# Plot the prinicipal compomentents of the TPM scores to determine if batch effects are present
+png(paste(project_name, "_PCA_Biplot.png"), 800, 800, pointsize=50)
+biplot(prcomp(x = log(gene_counts[paste(rownames(coldata),"_TPM")]+1, base = 2), 
+              scale.=TRUE), 
+       xlabs=rep(".", nrow(new_df)), 
+       #col=c("black", "red"),
+       pc.biplot = TRUE)
+dev.off()
+
+## End of script ----------------------------------------------------------------------------------
 print("DESeq2 analysis is complete")
